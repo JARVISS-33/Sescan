@@ -73,7 +73,7 @@ const $=id=>document.getElementById(id);
 const W={Critical:25,High:12,Medium:5,Low:2,Info:0};
 const OW={A01:"A01 Broken Access Control",A02:"A02 Cryptographic Failures",A03:"A03 Injection",A04:"A04 Insecure Design",A05:"A05 Security Misconfiguration",A06:"A06 Vulnerable Components",A07:"A07 Auth Failures",A08:"A08 Integrity Failures",A09:"A09 Logging Failures",A10:"A10 SSRF"};
 // >>> After deploying the backend, paste its address here (no slash at the end):
-const API="https://YOUR-BACKEND.onrender.com";
+const API="https://sescan.onrender.com";
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let report=null,PG=[],SCAN=null;
 const check=()=>{$("go").disabled=!($("own").checked&&/^https?:\/\/[^\/]+\.[^\/]+/i.test($("url").value.trim()))};
