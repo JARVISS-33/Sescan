@@ -22,6 +22,18 @@ public final class ReportBuilder {
         sb.append("<p><b>Target:</b> ").append(esc(e.url)).append("<br><b>Date:</b> ").append(e.createdAt)
           .append("<br><b>Pages scanned:</b> ").append(e.pagesCount).append("</p>");
         sb.append("<div class=\"sc\">").append(e.score).append("/100 &nbsp; Grade ").append(esc(e.grade)).append("</div><hr>");
+        JsonNode cov = result.get("coverage");
+        if (cov != null) {
+            sb.append("<p><b>Coverage:</b> ").append(cov.path("pagesCrawled").asInt()).append(" pages, ")
+              .append(cov.path("formsFound").asInt()).append(" forms, ")
+              .append(cov.path("parametersTested").asInt()).append(" parameters tested with active checks</p>");
+            JsonNode w = cov.get("warnings");
+            if (w != null && !w.isEmpty()) {
+                sb.append("<div class=\"f\"><b>Scan incomplete - treat the score with caution:</b><ul>");
+                for (JsonNode x : w) sb.append("<li>").append(esc(x.asText())).append("</li>");
+                sb.append("</ul></div>");
+            }
+        }
         JsonNode findings = result.get("findings");
         if (findings == null || findings.isEmpty()) sb.append("<p>No issues found by the implemented checks.</p>");
         else for (JsonNode f : findings) {
