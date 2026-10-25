@@ -1,1 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SecScan</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#2a313c;--tx:#e6edf3;--mut:#8b949e;--ac:#3fb950;--bad:#f85149;
+--Critical:#f85149;--High:#f0883e;--Medium:#d29922;--Low:#58a6ff;--Info:#8b949e;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:16px}
+h1{font:700 20px var(--mono);margin:0;letter-spacing:.5px}h1 span{color:var(--ac)}
+h2{font-size:16px;margin:22px 0 10px}
+.top{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:10px 0}
+label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+input,textarea,select{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:10px;font:inherit}
+textarea{min-height:70px;resize:vertical}
+input[type=checkbox]{width:auto;margin-right:8px}
+.chk{display:flex;align-items:flex-start;color:var(--tx);font-size:14px;margin:12px 0}
+button{background:var(--ac);color:#04130a;border:0;border-radius:6px;padding:10px 16px;font:600 14px inherit;cursor:pointer}
+button.sec{background:transparent;color:var(--tx);border:1px solid var(--line)}
+button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.mut{color:var(--mut);font-size:13px}.err{color:var(--bad);margin:8px 0;font-size:14px}
+.item{cursor:pointer}.item:hover{border-color:var(--ac)}
+.badge{display:inline-block;font:600 11px var(--mono);padding:2px 8px;border-radius:10px;color:#0d1117}
+.grade{font:700 40px var(--mono);color:var(--ac)}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;font:12px/1.5 var(--mono);margin:6px 0;max-height:240px;overflow:auto}
+.f{border-left:4px solid var(--Info)}
+.f summary{cursor:pointer;list-style:none}.f summary::-webkit-details-marker{display:none}
+.hide{display:none}
+a{color:var(--ac)}
+</style>
+</head>
+<body>
+<div class="top"><h1>SEC<span>SCAN</span></h1><button id="out" class="sec hide">Log out</button></div>
+<div class="wrap" id="app"></div>
+<script>
+var API="", tok=null, poll=null;
+try{tok=sessionStorage.getItem("t")}catch(e){}
+var app=document.getElementById("app"), outBtn=document.getElementById("out");
+var SEV=["Critical","High","Medium","Low","Info"], STAT=["Open","Confirmed","False positive","Accepted risk"];
 
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+function $(id){return document.getElementById(id)}
+function badge(s){return '<span class="badge" style="background:var(--'+esc(s)+')">'+esc(s)+'</span>'}
+function fmt(d){try{return new Date(d).toLocaleString()}catch(e){return ""}}
+
+async function api(path,method,body){
+  var h={"Content-Type":"application/json"};
+  if(tok)h.Authorization="Bearer "+tok;
+  var r=await fetch(API+path,{method:method||"GET",headers:h,body:body?JSON.stringify(body):undefined});
+  if(r.status===401&&path!=="/api/login"){logout();throw new Error("Please log in again.")}
+  var j=null;try{j=await r.json()}catch(e){}
+  if(!r.ok)throw new Error((j&&j.error)||("Request failed ("+r.status+")"));
+  return j;
+}
+function logout(){tok=null;try{sessionStorage.removeItem("t")}catch(e){}clearInterval(poll);show()}
+outBtn.onclick=logout;
+function show(){outBtn.classList.toggle("hide",!tok);tok?list():loginView()}
+
+/* ---------- login ---------- */
+function loginView(){
+  app.innerHTML='<div class="card" style="margin-top:40px"><h2 style="margin-top:0">Log in</h2>'+
+  '<label>Password</label><input id="pw" type="password" autocomplete="current-password">'+
+  '<div id="e" class="err"></div><button id="go">Log in</button>'+
+  '<p class="mut">First request may take up to a minute while the server wakes up.</p></div>';
+  var go=async function(){
+    $("go").disabled=true;$("e").textContent="";
+    try{var j=await api("/api/login","POST",{password:$("pw").value});tok=j.token;
+      try{sessionStorage.setItem("t",tok)}catch(e){}show()}
+    catch(e){$("e").textContent=e.message;$("go").disabled=false}
+  };
+  $("go").onclick=go;$("pw").onkeydown=function(e){if(e.key==="Enter")go()};
+}
+
+/* ---------- engagements ---------- */
+async function list(){
+  clearInterval(poll);
+  app.innerHTML='<p class="mut">Loading…</p>';
+  try{
+    var l=await api("/api/engagements"),h='<div class="row" style="justify-content:space-between"><h2>Engagements</h2><button id="new">+ New</button></div>';
+    if(!l.length)h+='<div class="card mut">No engagements yet. Create one to start scanning.</div>';
+    l.forEach(function(e){
+      h+='<div class="card item" data-id="'+esc(e.id)+'"><b>'+esc(e.client)+'</b>'+
+      '<div class="mut">'+esc(e.scan_count)+' scans · '+esc(e.open_findings)+' open findings · '+esc(fmt(e.created_at))+'</div></div>';
+    });
+    app.innerHTML=h;
+    $("new").onclick=newView;
+    [].forEach.call(app.querySelectorAll(".item"),function(el){el.onclick=function(){detail(el.dataset.id)}});
+  }catch(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>'}
+}
+
+function newView(){
+  app.innerHTML='<h2>New engagement</h2><div class="card">'+
+  '<label>Client name</label><input id="c">'+
+  '<label>Authorization reference (contract, ticket or email ID)</label><input id="a">'+
+  '<label>In-scope domains, one per line</label><textarea id="s" placeholder="example.com"></textarea>'+
+  '<label>Tester name (optional)</label><input id="t">'+
+  '<div id="e" class="err"></div><div class="row"><button id="ok">Create</button><button class="sec" id="no">Cancel</button></div></div>';
+  $("no").onclick=list;
+  $("ok").onclick=async function(){
+    $("e").textContent="";
+    try{var j=await api("/api/engagements","POST",{client:$("c").value,authRef:$("a").value,scope:$("s").value,tester:$("t").value});detail(j.id)}
+    catch(e){$("e").textContent=e.message}
+  };
+}
+
+/* ---------- engagement detail ---------- */
+async function detail(id){
+  clearInterval(poll);
+  try{
+    var d=await api("/api/engagements/"+id),e=d.engagement,f=d.findings,running=null;
+    var h='<p><a href="#" id="back">← All engagements</a></p>'+
+    '<div class="card"><div class="row" style="justify-content:space-between"><div><b style="font-size:18px">'+esc(e.client)+'</b>'+
+    '<div class="mut">Auth ref: '+esc(e.auth_ref)+'</div></div><div style="text-align:right"><div class="grade">'+esc(d.grade)+'</div><div class="mut">Score '+esc(d.score)+'</div></div></div>'+
+    '<div class="mut" style="margin-top:8px">Scope: '+esc(String(e.scope).split("\n").join(", "))+'</div>'+
+    '<div class="row" style="margin-top:10px"><button id="rep">Open report</button></div></div>';
+
+    h+='<h2>Run a web scan</h2><div class="card"><label>Target URL (must be inside scope)</label><input id="u" placeholder="https://example.com" inputmode="url">'+
+    '<label>Session cookie (optional, for logged-in scanning)</label><input id="ck" autocomplete="off">'+
+    '<label class="chk"><input type="checkbox" id="act">Active checks (sends extra test requests)</label>'+
+    '<label class="chk"><input type="checkbox" id="au">I confirm this target is covered by the written authorization above.</label>'+
+    '<div id="se" class="err"></div><button id="scan">Start scan</button></div>';
+
+    h+='<h2>Scans</h2>';
+    if(!d.scans.length)h+='<div class="card mut">No scans yet.</div>';
+    d.scans.forEach(function(s){
+      if(s.status==="RUNNING"&&!running)running=s.id;
+      h+='<div class="card"><div class="row" style="justify-content:space-between"><span style="word-break:break-all">'+esc(s.target)+'</span><b>'+esc(s.status)+'</b></div>'+
+      '<div class="mut">'+esc(s.pages)+' pages · '+esc(fmt(s.created_at))+'</div></div>';
+    });
+
+    var o={};SEV.forEach(function(x,i){o[x]=i});
+    f=f.slice().sort(function(a,b){return o[a.severity]-o[b.severity]});
+    h+='<div class="row" style="justify-content:space-between"><h2>Findings ('+f.length+')</h2><button class="sec" id="addf">+ Manual</button></div>';
+    if(!f.length)h+='<div class="card mut">No findings yet.</div>';
+    f.forEach(function(x){
+      h+='<details class="card f" style="border-left-color:var(--'+esc(x.severity)+')" data-id="'+esc(x.id)+'"><summary>'+badge(x.severity)+' <b>'+esc(x.title)+'</b>'+
+      '<div class="mut">'+esc(x.status)+(x.location?' · '+esc(x.location):'')+(x.occurrences>1?' · ×'+esc(x.occurrences):'')+'</div></summary>'+
+      (x.description?'<p>'+esc(x.description)+'</p>':'')+
+      (x.evidence?'<div class="mut">Evidence</div><pre>'+esc(x.evidence)+'</pre>':'')+
+      (x.fix?'<div class="mut">Fix</div><p>'+esc(x.fix)+'</p>':'')+
+      '<div class="mut">'+esc([x.owasp,x.cwe,x.cvss?'CVSS '+x.cvss:''].filter(Boolean).join(" · "))+'</div>'+
+      '<div class="row"><div style="flex:1"><label>Status</label><select class="st">'+STAT.map(function(s){return '<option'+(s===x.status?' selected':'')+'>'+esc(s)+'</option>'}).join("")+'</select></div>'+
+      '<div style="flex:1"><label>Severity</label><select class="sv">'+SEV.map(function(s){return '<option'+(s===x.severity?' selected':'')+'>'+esc(s)+'</option>'}).join("")+'</select></div></div>'+
+      '<label>Notes</label><textarea class="nt">'+esc(x.notes)+'</textarea>'+
+      '<div class="row" style="margin-top:8px"><button class="save">Save</button><span class="mut ok"></span></div></details>';
+    });
+    h+='<div id="mf"></div>';
+    app.innerHTML=h;
+
+    $("back").onclick=function(ev){ev.preventDefault();list()};
+    $("rep").onclick=function(){report(id)};
+    $("addf").onclick=function(){manual(id)};
+    $("scan").onclick=async function(){
+      $("se").textContent="";$("scan").disabled=true;
+      try{await api("/api/engagements/"+id+"/scans/web","POST",{url:$("u").value.trim(),cookie:$("ck").value||null,active:$("act").checked,authorized:$("au").checked});detail(id)}
+      catch(er){$("se").textContent=er.message;$("scan").disabled=false}
+    };
+    [].forEach.call(app.querySelectorAll(".f"),function(el){
+      el.querySelector(".save").onclick=async function(){
+        var m=el.querySelector(".ok");m.textContent="Saving…";
+        try{await api("/api/findings/"+el.dataset.id,"PATCH",{status:el.querySelector(".st").value,severity:el.querySelector(".sv").value,notes:el.querySelector(".nt").value});m.textContent="Saved"}
+        catch(er){m.textContent=er.message}
+      };
+    });
+    if(running){poll=setInterval(async function(){
+      try{var s=await api("/api/scans/"+running);if(s.status!=="RUNNING"){clearInterval(poll);detail(id)}}catch(er){clearInterval(poll)}
+    },4000)}
+  }catch(er){app.innerHTML='<div class="err">'+esc(er.message)+'</div><button class="sec" id="b2">Back</button>';$("b2").onclick=list}
+}
+
+function manual(id){
+  var box=$("mf");
+  box.innerHTML='<h2>Add finding</h2><div class="card"><label>Title</label><input id="mt"><label>Severity</label><select id="ms">'+
+  SEV.map(function(s){return '<option'+(s==="Medium"?' selected':'')+'>'+s+'</option>'}).join("")+'</select>'+
+  '<label>Location</label><input id="ml"><label>Description</label><textarea id="md"></textarea>'+
+  '<label>Evidence</label><textarea id="me"></textarea><label>Fix</label><textarea id="mx"></textarea>'+
+  '<div id="mr" class="err"></div><button id="mk">Add</button></div>';
+  box.scrollIntoView();
+  $("mk").onclick=async function(){
+    try{await api("/api/engagements/"+id+"/findings","POST",{title:$("mt").value,severity:$("ms").value,location:$("ml").value,description:$("md").value,evidence:$("me").value,fix:$("mx").value});detail(id)}
+    catch(er){$("mr").textContent=er.message}
+  };
+}
+
+async function report(id){
+  try{
+    var r=await fetch(API+"/api/engagements/"+id+"/report",{headers:{Authorization:"Bearer "+tok}});
+    if(!r.ok)throw new Error("Could not load report");
+    var b=new Blob([await r.text()],{type:"text/html"}),u=URL.createObjectURL(b);
+    window.open(u,"_blank")||(location.href=u);
+  }catch(er){alert(er.message)}
+}
+show();
+</script>
+</body>
+</html>
